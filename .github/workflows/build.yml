@@ -1,0 +1,253 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+# ── version pins ─────────────────────────────────────────────────
+env:
+  WINLIBS_VER: "15.1.0posix-12.0.0-ucrt-r7"
+  WINLIBS_GCC: "15.1.0"
+  WINLIBS_W64: "12.0.0"
+  BUSYBOX_URL: "https://frippery.org/files/busybox/busybox64.exe"
+  # Bump this to force a cache miss and full rebuild.
+  TOOLCHAIN_REV: "1"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  #  x86-64
+  # ──────────────────────────────────────────────────────────────
+  toolchain-x86_64:
+    name: Toolchain (x86-64)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Cache toolchain
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: toolchain-windows-x86-64.7z
+          key: toolchain-x86_64-${{ env.WINLIBS_VER }}-${{ env.TOOLCHAIN_REV }}
+
+      - name: Download WinLibs
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/" `
+               + "$env:WINLIBS_VER/winlibs-x86_64-posix-seh-gcc-$env:WINLIBS_GCC" `
+               + "-mingw-w64ucrt-$env:WINLIBS_W64-r7.7z"
+          Invoke-WebRequest -Uri $url -OutFile winlibs.7z
+          7z x winlibs.7z -o"raw" -y | Out-Null
+
+      - name: Download BusyBox
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:BUSYBOX_URL -OutFile raw\mingw64\bin\busybox.exe
+
+      - name: Add sh.exe
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Copy-Item raw\mingw64\bin\busybox.exe raw\mingw64\bin\sh.exe
+
+      - name: Strip binaries
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $strip = "raw\mingw64\bin\strip.exe"
+          Get-ChildItem "raw\mingw64" -Recurse -Include "*.exe","*.dll" | ForEach-Object {
+            & $strip --strip-unneeded $_.FullName 2>$null
+          }
+
+      - name: Prune unnecessary files
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $root   = "raw\mingw64"
+          $gccver = $env:WINLIBS_GCC
+          $target = "x86_64-w64-mingw32"
+
+          # docs, man, info, locale
+          Remove-Item "$root\share" -Recurse -Force -ErrorAction SilentlyContinue
+
+          # bin/ whitelist — anything not here and not a .dll is deleted
+          $keep_bin = [System.Collections.Generic.HashSet[string]]@(
+            "gcc.exe", "gcc-$gccver.exe", "gcc-ar.exe",
+            "gcc-nm.exe", "gcc-ranlib.exe",
+            "g++.exe", "cpp.exe",
+            "as.exe", "ld.exe", "ld.bfd.exe",
+            "ar.exe", "ranlib.exe", "nm.exe",
+            "objcopy.exe", "objdump.exe", "strip.exe",
+            "dlltool.exe", "windres.exe", "windmc.exe",
+            "c++filt.exe",
+            "mingw32-make.exe",
+            "busybox.exe", "sh.exe"
+          )
+          Get-ChildItem "$root\bin" -File | Where-Object {
+            $_.Extension -ne ".dll" -and -not $keep_bin.Contains($_.Name)
+          } | Remove-Item -Force
+
+          # libexec: drop non-C/C++ compiler passes
+          $libexec = "$root\libexec\gcc\$target\$gccver"
+          @("f951.exe","gnat1.exe","go1.exe","gofmt.exe","d21.exe","cc1obj.exe") | ForEach-Object {
+            Remove-Item "$libexec\$_" -Force -ErrorAction SilentlyContinue
+          }
+
+          # lib/gcc: drop language-specific archives
+          $libgcc = "$root\lib\gcc\$target\$gccver"
+          @("libgfortran*","finclude","libgomp*","libgnat*","rts-*","libgo*","libphobos*","d") | ForEach-Object {
+            Remove-Item "$libgcc\$_" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          # include: drop Ada, D
+          @("ada","gnat","d") | ForEach-Object {
+            Remove-Item "$root\include\$_" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          # <target>/bin: internal sysroot tools whitelist
+          $xbin = "$root\$target\bin"
+          $keep_xbin = [System.Collections.Generic.HashSet[string]]@(
+            "as.exe","ld.exe","ld.bfd.exe","ar.exe","ranlib.exe",
+            "dlltool.exe","windres.exe","strip.exe","objcopy.exe","nm.exe"
+          )
+          Get-ChildItem $xbin -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.Extension -ne ".dll" -and -not $keep_xbin.Contains($_.Name)
+          } | Remove-Item -Force
+
+          $sizeMB = [math]::Round(
+            (Get-ChildItem $root -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "Pruned tree size: $sizeMB MB"
+
+      - name: Normalize to toolchain\ and repack as 7z
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Rename-Item raw\mingw64 raw\toolchain
+          7z a -t7z -mx=9 -mmt=on -ms=on toolchain-windows-x86-64.7z ".\raw\toolchain" | Out-Null
+          $mb = [math]::Round((Get-Item toolchain-windows-x86-64.7z).Length / 1MB, 1)
+          Write-Host "Archive: $mb MB"
+
+      - name: Smoke test
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          7z x toolchain-windows-x86-64.7z -o"verify" -y | Out-Null
+          $bin = "verify\toolchain\bin"
+          & "$bin\gcc.exe" --version
+          & "$bin\mingw32-make.exe" --version
+          & "$bin\sh.exe" -c "echo sh ok"
+          Write-Host "Smoke test passed."
+
+      - name: Publish to latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest
+          prerelease: false
+          make_latest: true
+          files: toolchain-windows-x86-64.7z
+
+  # ──────────────────────────────────────────────────────────────
+  #  ARM64
+  # ──────────────────────────────────────────────────────────────
+  toolchain-arm64:
+    name: Toolchain (ARM64)
+    runs-on: windows-11-arm
+    permissions:
+      contents: write
+
+    steps:
+      - name: Cache toolchain
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: C:\toolchain-windows-aarch64.7z
+          key: toolchain-arm64-msys2-clangarm64-${{ env.TOOLCHAIN_REV }}
+
+      - name: Set up MSYS2 (clangarm64)
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          install: >-
+            mingw-w64-clang-aarch64-gcc-compat
+            mingw-w64-clang-aarch64-make
+            mingw-w64-clang-aarch64-binutils
+
+      - name: Download BusyBox
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:BUSYBOX_URL -OutFile C:\msys64\clangarm64\bin\busybox.exe
+
+      - name: Add sh.exe
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          cp /clangarm64/bin/busybox.exe /clangarm64/bin/sh.exe
+
+      - name: Strip binaries
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          find /clangarm64/bin /clangarm64/lib \( -name "*.exe" -o -name "*.dll" \) \
+            | xargs -P4 -I{} strip --strip-unneeded {} 2>/dev/null || true
+
+      - name: Prune unnecessary files
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          root=/clangarm64
+
+          rm -rf "$root/share"
+
+          keep=(
+            gcc.exe g++.exe cpp.exe
+            clang.exe clang++.exe clang-cpp.exe
+            aarch64-w64-mingw32-gcc.exe aarch64-w64-mingw32-g++.exe
+            as.exe ld.exe ld.lld.exe lld.exe
+            llvm-ar.exe ar.exe llvm-ranlib.exe ranlib.exe
+            llvm-nm.exe nm.exe llvm-strip.exe strip.exe
+            llvm-objcopy.exe objcopy.exe llvm-objdump.exe objdump.exe
+            llvm-dlltool.exe dlltool.exe
+            windres.exe windmc.exe
+            make.exe mingw32-make.exe
+            busybox.exe sh.exe
+          )
+          for f in "$root/bin/"*.exe; do
+            name=$(basename "$f")
+            match=false
+            for k in "${keep[@]}"; do [[ "$name" == "$k" ]] && match=true && break; done
+            $match || rm -f "$f"
+          done
+
+          echo "Pruned size: $(du -sh "$root" | cut -f1)"
+
+      - name: Normalize to toolchain\ and repack as 7z
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          mv /clangarm64 /toolchain
+          7z a -t7z -mx=9 -mmt=on -ms=on /c/toolchain-windows-aarch64.7z /toolchain
+          ls -lh /c/toolchain-windows-aarch64.7z
+
+      - name: Smoke test
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          7z x /c/toolchain-windows-aarch64.7z -o/c/verify -y >/dev/null
+          /c/verify/toolchain/bin/gcc.exe --version
+          /c/verify/toolchain/bin/make.exe --version
+          /c/verify/toolchain/bin/sh.exe -c "echo sh ok"
+          echo "Smoke test passed."
+
+      - name: Publish to latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest
+          prerelease: false
+          make_latest: true
+          files: C:\toolchain-windows-aarch64.7z
