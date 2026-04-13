@@ -5,9 +5,10 @@ on:
 
 # ── version pins ─────────────────────────────────────────────────
 env:
-  WINLIBS_VER: "15.1.0posix-12.0.0-ucrt-r7"
+  WINLIBS_VER: "15.1.0posix-13.0.0-ucrt-r4"
   WINLIBS_GCC: "15.1.0"
-  WINLIBS_W64: "12.0.0"
+  WINLIBS_W64: "13.0.0"
+  WINLIBS_REV: "r4"
   BUSYBOX_URL: "https://frippery.org/files/busybox/busybox64.exe"
   # Bump this to force a cache miss and full rebuild.
   TOOLCHAIN_REV: "1"
@@ -21,6 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x86-64
@@ -44,7 +46,7 @@ jobs:
         run: |
           $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/" `
                + "$env:WINLIBS_VER/winlibs-x86_64-posix-seh-gcc-$env:WINLIBS_GCC" `
-               + "-mingw-w64ucrt-$env:WINLIBS_W64-r7.7z"
+               + "-mingw-w64ucrt-$env:WINLIBS_W64-$env:WINLIBS_REV.7z"
           Invoke-WebRequest -Uri $url -OutFile winlibs.7z
           7z x winlibs.7z -o"raw" -y | Out-Null
 
