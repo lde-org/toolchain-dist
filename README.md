@@ -1,6 +1,6 @@
 # toolchain-dist
 
-This repository provides up to date builds of a minimal Windows C/C++ toolchain (GCC + binutils + BusyBox sh), ready to unpack and use. Built for the [lde](https://github.com/lde-org/lde) project.
+This repository provides up to date builds of a minimal Windows C/C++ toolchain (Clang/LLD + BusyBox sh), ready to unpack and use. Built for the [lde](https://github.com/lde-org/lde) project.
 
 ## Supported Platforms
 

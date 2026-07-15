@@ -5,11 +5,7 @@ on:
 
 # ── version pins ─────────────────────────────────────────────────
 env:
-  WINLIBS_VER: "15.1.0posix-13.0.0-ucrt-r4"
-  WINLIBS_GCC: "15.1.0"
-  WINLIBS_W64: "13.0.0"
-  WINLIBS_REV: "r4"
-  BUSYBOX_URL: "https://frippery.org/files/busybox/busybox64.exe"
+  LLVM_MINGW_VER: "20260616"
   # Bump this to force a cache miss and full rebuild.
   TOOLCHAIN_REV: "1"
 
@@ -27,8 +23,13 @@ jobs:
         include:
           - arch: x86-64
             os: windows-latest
+            target: x86_64-w64-mingw32
+            # llvm-mingw uses x86_64 (underscore) in asset names
+            url_arch: x86_64
           - arch: aarch64
             os: windows-11-arm
+            target: aarch64-w64-mingw32
+            url_arch: aarch64
 
     steps:
       - name: Cache toolchain
@@ -36,199 +37,105 @@ jobs:
         uses: actions/cache@v4
         with:
           path: toolchain-windows-${{ matrix.arch }}.7z
-          key: toolchain-${{ matrix.arch }}-${{ env.WINLIBS_VER }}-${{ env.TOOLCHAIN_REV }}
+          key: toolchain-${{ matrix.arch }}-${{ env.LLVM_MINGW_VER }}-${{ env.TOOLCHAIN_REV }}
 
-      # ── x86-64 ──────────────────────────────────────────────────
+      # ── download & extract ──────────────────────────────────────
 
-      - name: Download WinLibs
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'x86-64'
+      - name: Download llvm-mingw
+        if: steps.cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/" `
-               + "$env:WINLIBS_VER/winlibs-x86_64-posix-seh-gcc-$env:WINLIBS_GCC" `
-               + "-mingw-w64ucrt-$env:WINLIBS_W64-$env:WINLIBS_REV.7z"
-          Invoke-WebRequest -Uri $url -OutFile winlibs.7z
-          7z x winlibs.7z -o"raw" -y | Out-Null
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/" `
+               + "$env:LLVM_MINGW_VER/llvm-mingw-$env:LLVM_MINGW_VER-ucrt-${{ matrix.url_arch }}.zip"
+          Invoke-WebRequest -Uri $url -OutFile llvm-mingw.zip
+          7z x llvm-mingw.zip -o"raw" -y | Out-Null
 
-      - name: Download BusyBox
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'x86-64'
-        shell: pwsh
+      - name: Normalize tree
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
         run: |
-          Invoke-WebRequest -Uri $env:BUSYBOX_URL -OutFile raw\mingw64\bin\busybox.exe
+          shopt -s extglob
+          root=raw/toolchain
+          target='${{ matrix.target }}'
 
-      - name: Add sh.exe
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'x86-64'
-        shell: pwsh
-        run: |
-          Copy-Item raw\mingw64\bin\busybox.exe raw\mingw64\bin\sh.exe
+          # rename extracted dir to toolchain/
+          mv raw/llvm-mingw-* "$root"
 
-      - name: Strip binaries
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'x86-64'
-        shell: pwsh
-        run: |
-          $strip = "raw\mingw64\bin\strip.exe"
-          Get-ChildItem "raw\mingw64" -Recurse -Include "*.exe","*.dll" | ForEach-Object {
-            & $strip --strip-unneeded $_.FullName 2>$null
-          }
+          # move busybox sh into bin/
+          cp "$root"/busybox/bin/{busybox,sh}.exe "$root/bin/"
 
-      - name: Prune unnecessary files
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'x86-64'
-        shell: pwsh
-        run: |
-          $root   = "raw\mingw64"
-          $gccver = $env:WINLIBS_GCC
-          $target = "x86_64-w64-mingw32"
+          # ── strip binaries ──
+          find "$root" -type f \( -name "*.exe" -o -name "*.dll" \) -print0 \
+            | xargs -0 -P4 "$root/bin/strip.exe" --strip-unneeded 2>/dev/null || true
 
-          # docs, man, info, locale
-          Remove-Item "$root\share" -Recurse -Force -ErrorAction SilentlyContinue
+          # ── prune: remove top-level cruft ──
+          rm -rf "$root"/{share,python,busybox}
 
-          # bin/ whitelist — anything not here and not a .dll is deleted
-          $keep_bin = [System.Collections.Generic.HashSet[string]]@(
-            "gcc.exe", "gcc-$gccver.exe", "gcc-ar.exe",
-            "gcc-nm.exe", "gcc-ranlib.exe",
-            "g++.exe", "cpp.exe",
-            "as.exe", "ld.exe", "ld.bfd.exe",
-            "ar.exe", "ranlib.exe", "nm.exe",
-            "objcopy.exe", "objdump.exe", "strip.exe",
-            "dlltool.exe", "windres.exe", "windmc.exe",
-            "c++filt.exe",
-            "mingw32-make.exe",
-            "busybox.exe", "sh.exe"
-          )
-          Get-ChildItem "$root\bin" -File | Where-Object {
-            $_.Extension -ne ".dll" -and -not $keep_bin.Contains($_.Name)
-          } | Remove-Item -Force
+          # ── prune: remove non-native cross-compilation targets ──
+          for d in "$root"/*-w64-mingw32; do
+            [[ "$(basename "$d")" != "$target" ]] && rm -rf "$d"
+          done
 
-          # libexec: drop non-C/C++ compiler passes
-          $libexec = "$root\libexec\gcc\$target\$gccver"
-          @("f951.exe","gnat1.exe","go1.exe","gofmt.exe","d21.exe","cc1obj.exe") | ForEach-Object {
-            Remove-Item "$libexec\$_" -Force -ErrorAction SilentlyContinue
-          }
-
-          # lib/gcc: drop language-specific archives
-          $libgcc = "$root\lib\gcc\$target\$gccver"
-          @("libgfortran*","finclude","libgomp*","libgnat*","rts-*","libgo*","libphobos*","d") | ForEach-Object {
-            Remove-Item "$libgcc\$_" -Recurse -Force -ErrorAction SilentlyContinue
-          }
-
-          # include: drop Ada, D
-          @("ada","gnat","d") | ForEach-Object {
-            Remove-Item "$root\include\$_" -Recurse -Force -ErrorAction SilentlyContinue
-          }
-
-          # <target>/bin: internal sysroot tools whitelist
-          $xbin = "$root\$target\bin"
-          $keep_xbin = [System.Collections.Generic.HashSet[string]]@(
-            "as.exe","ld.exe","ld.bfd.exe","ar.exe","ranlib.exe",
-            "dlltool.exe","windres.exe","strip.exe","objcopy.exe","nm.exe"
-          )
-          Get-ChildItem $xbin -File -ErrorAction SilentlyContinue | Where-Object {
-            $_.Extension -ne ".dll" -and -not $keep_xbin.Contains($_.Name)
-          } | Remove-Item -Force
-
-          $sizeMB = [math]::Round(
-            (Get-ChildItem $root -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
-          Write-Host "Pruned tree size: $sizeMB MB"
-
-      - name: Normalize to toolchain\ and repack as 7z
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'x86-64'
-        shell: pwsh
-        run: |
-          Rename-Item raw\mingw64 raw\toolchain
-          7z a -t7z -mx=9 -mmt=on -ms=on toolchain-windows-x86-64.7z ".\raw\toolchain" | Out-Null
-          $mb = [math]::Round((Get-Item toolchain-windows-x86-64.7z).Length / 1MB, 1)
-          Write-Host "Archive: $mb MB"
-
-      - name: Smoke test
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'x86-64'
-        shell: pwsh
-        run: |
-          7z x toolchain-windows-x86-64.7z -o"verify" -y | Out-Null
-          $bin = "verify\toolchain\bin"
-          & "$bin\gcc.exe" --version
-          & "$bin\mingw32-make.exe" --version
-          & "$bin\sh.exe" -c "echo sh ok"
-          Write-Host "Smoke test passed."
-
-      # ── aarch64 ─────────────────────────────────────────────────
-
-      - name: Set up MSYS2 (clangarm64)
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'aarch64'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: CLANGARM64
-          install: >-
-            mingw-w64-clang-aarch64-gcc-compat
-            mingw-w64-clang-aarch64-make
-            mingw-w64-clang-aarch64-binutils
-
-      - name: Download BusyBox
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'aarch64'
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri $env:BUSYBOX_URL -OutFile C:\msys64\clangarm64\bin\busybox.exe
-
-      - name: Add sh.exe
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'aarch64'
-        shell: msys2 {0}
-        run: |
-          cp /clangarm64/bin/busybox.exe /clangarm64/bin/sh.exe
-
-      - name: Strip binaries
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'aarch64'
-        shell: msys2 {0}
-        run: |
-          find /clangarm64/bin /clangarm64/lib \( -name "*.exe" -o -name "*.dll" \) \
-            | xargs -P4 -I{} strip --strip-unneeded {} 2>/dev/null || true
-
-      - name: Prune unnecessary files
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'aarch64'
-        shell: msys2 {0}
-        run: |
-          root=/clangarm64
-
-          rm -rf "$root/share"
-
+          # ── prune: bin/ whitelist ──
           keep=(
-            gcc.exe g++.exe cpp.exe
-            clang.exe clang++.exe clang-cpp.exe
-            aarch64-w64-mingw32-gcc.exe aarch64-w64-mingw32-g++.exe
-            as.exe ld.exe ld.lld.exe lld.exe
-            llvm-ar.exe ar.exe llvm-ranlib.exe ranlib.exe
-            llvm-nm.exe nm.exe llvm-strip.exe strip.exe
-            llvm-objcopy.exe objcopy.exe llvm-objdump.exe objdump.exe
-            llvm-dlltool.exe dlltool.exe
-            windres.exe windmc.exe
-            make.exe mingw32-make.exe
+            # compiler
+            clang.exe clang++.exe clang-22.exe
+            clang-target-wrapper.exe
+            # linker
+            ld.lld.exe
+            # binutils
+            llvm-ar.exe llvm-ranlib.exe llvm-nm.exe
+            llvm-objcopy.exe llvm-objdump.exe llvm-strip.exe
+            llvm-dlltool.exe llvm-windres.exe
+            llvm-size.exe llvm-readobj.exe
+            llvm-rc.exe llvm-cvtres.exe
+            llvm-cxxfilt.exe llvm-strings.exe
+            # GCC-compat wrappers
+            gcc.exe g++.exe cc.exe c++.exe c99.exe c11.exe
+            ar.exe ranlib.exe nm.exe
+            strip.exe objcopy.exe objdump.exe
+            dlltool.exe windres.exe size.exe
+            addr2line.exe strings.exe readelf.exe
+            # ld wrapper script
+            ld
+            # make
+            mingw32-make.exe
+            # busybox / shell
             busybox.exe sh.exe
           )
           for f in "$root/bin/"*.exe; do
             name=$(basename "$f")
             match=false
-            for k in "${keep[@]}"; do [[ "$name" == "$k" ]] && match=true && break; done
+            for k in "${keep[@]}"; do
+              [[ "$name" == "$k" ]] && match=true && break
+            done
             $match || rm -f "$f"
           done
 
+          # ── prune: target sysroot share/ ──
+          rm -rf "$root/$target/share"
+
           echo "Pruned size: $(du -sh "$root" | cut -f1)"
 
-      - name: Normalize to toolchain\ and repack as 7z
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'aarch64'
-        shell: msys2 {0}
+      # ── repack ───────────────────────────────────────────────────
+
+      - name: Repack as 7z
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
         run: |
-          ws=$(cygpath "$GITHUB_WORKSPACE")
-          mv /clangarm64 /toolchain
-          7z a -t7z -mx=9 -mmt=on -ms=on "$ws/toolchain-windows-aarch64.7z" /toolchain
-          ls -lh "$ws/toolchain-windows-aarch64.7z"
+          cd raw && 7z a -t7z -mx=9 -mmt=on -ms=on "$OLDPWD/toolchain-windows-${{ matrix.arch }}.7z" toolchain | tail -2
+
+      # ── smoke test ───────────────────────────────────────────────
 
       - name: Smoke test
-        if: steps.cache.outputs.cache-hit != 'true' && matrix.arch == 'aarch64'
-        shell: msys2 {0}
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
         run: |
-          ws=$(cygpath "$GITHUB_WORKSPACE")
-          7z x "$ws/toolchain-windows-aarch64.7z" -o/c/verify -y >/dev/null
-          /c/verify/toolchain/bin/gcc.exe --version
-          /c/verify/toolchain/bin/make.exe --version
-          /c/verify/toolchain/bin/sh.exe -c "echo sh ok"
+          7z x "toolchain-windows-${{ matrix.arch }}.7z" -overify -y >/dev/null
+          bin=verify/toolchain/bin
+          "$bin/gcc.exe" --version
+          "$bin/mingw32-make.exe" --version
+          "$bin/sh.exe" -c "echo sh ok"
           echo "Smoke test passed."
 
       # ── publish ─────────────────────────────────────────────────
