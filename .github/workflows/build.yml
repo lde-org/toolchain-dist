@@ -124,8 +124,13 @@ jobs:
             rm -f "$clanglib"/lib/windows/libclang_rt.{"$lib","$lib"_}*
           done
 
-          # prune: cross-arch .cfg files (target sysroots already removed)
+          # prune: cross-arch .cfg files and wrapper scripts (target sysroots removed)
           rm -f "$root"/bin/{aarch64,arm64ec,armv7,i686}-{pc,w64}-windows-gnu.cfg
+          rm -f "$root"/bin/{aarch64,arm64ec,armv7,i686,x86_64}-w64-mingw32{uwp,}-{ld,objdump}
+
+          # prune: Clang tool scripts (scan-build, etc.)
+          rm -f "$root"/bin/{analyze-build,intercept-build,git-clang-format,run-clang-tidy,scan-build-py}
+          rm -rf "$root"/lib/{libear,libscanbuild}
 
           # prune: non-essential tools (PE inspector, disassembler, readelf)
           rm -f "$root"/bin/{llvm-readobj,llvm-readelf,llvm-objdump}.exe
