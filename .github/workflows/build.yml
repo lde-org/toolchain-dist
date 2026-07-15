@@ -164,11 +164,14 @@ jobs:
 
       # ── publish ─────────────────────────────────────────────────
 
+      - name: Copy 7zr.exe
+        shell: bash
+        run: cp "/c/Program Files/7-Zip/7zr.exe" "7zr-${{ matrix.url_arch }}.exe"
+
       - name: Publish to latest release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Latest
-          prerelease: false
-          make_latest: true
-          files: toolchain-windows-${{ matrix.arch }}.7z
+          files: |
+            toolchain-windows-${{ matrix.arch }}.7z
+            7zr-${{ matrix.url_arch }}.exe
