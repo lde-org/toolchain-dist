@@ -85,9 +85,9 @@ jobs:
             ld.lld.exe
             # binutils
             llvm-ar.exe llvm-ranlib.exe llvm-nm.exe
-            llvm-objcopy.exe llvm-objdump.exe llvm-strip.exe
+            llvm-objcopy.exe llvm-strip.exe
             llvm-dlltool.exe llvm-windres.exe
-            llvm-size.exe llvm-readobj.exe
+            llvm-size.exe
             llvm-rc.exe llvm-cvtres.exe
             llvm-cxxfilt.exe llvm-strings.exe
             # GCC-compat wrappers
@@ -121,10 +121,16 @@ jobs:
           clanglib="$root/lib/clang/22"
           rm -rf "$clanglib"/lib/linux "$clanglib"/share "$clanglib"/bin
           for lib in fuzzer ubsan stats profile xray hwasan lsan tsan msan scudo memprof gwp_asan nsan dfsan asan safe_stack; do
-            rm -f "$clanglib"/lib/windows/libclang_rt.{"$lib","$lib"_*}*
+            rm -f "$clanglib"/lib/windows/libclang_rt.{"$lib","$lib"_}*
           done
 
-          # ── prune: target sysroot share/ and unneeded DLLs ──
+          # prune: cross-arch .cfg files (target sysroots already removed)
+          rm -f "$root"/bin/{aarch64,arm64ec,armv7,i686}-{pc,w64}-windows-gnu.cfg
+
+          # prune: non-essential tools (PE inspector, disassembler, readelf)
+          rm -f "$root"/bin/{llvm-readobj,llvm-readelf,llvm-objdump}.exe
+
+          # prune: target sysroot share/ and unneeded DLLs
           rm -rf "$root/$target/share"
           rm -f "$root/$target"/bin/{libomp,libclang_rt.asan*}.dll "$root/$target"/bin/libclang_rt.asan*
 
