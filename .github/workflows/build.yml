@@ -164,9 +164,15 @@ jobs:
 
       # ── publish ─────────────────────────────────────────────────
 
-      - name: Copy 7zr.exe
-        shell: bash
-        run: cp "/c/Program Files/7-Zip/7zr.exe" "7zr-${{ matrix.url_arch }}.exe"
+      - name: Download 7z extractor
+        if: matrix.arch == 'x86-64'
+        shell: pwsh
+        run: Invoke-WebRequest -Uri "https://github.com/ip7z/7zip/releases/download/26.02/7zr.exe" -OutFile 7z-x86_64.exe
+
+      - name: Download 7z extractor
+        if: matrix.arch == 'aarch64'
+        shell: pwsh
+        run: Invoke-WebRequest -Uri "https://github.com/ip7z/7zip/releases/download/26.02/7z2602-arm64.exe" -OutFile 7z-aarch64.exe
 
       - name: Publish to latest release
         uses: softprops/action-gh-release@v2
@@ -174,4 +180,4 @@ jobs:
           tag_name: latest
           files: |
             toolchain-windows-${{ matrix.arch }}.7z
-            7zr-${{ matrix.url_arch }}.exe
+            7z-${{ matrix.url_arch }}.exe

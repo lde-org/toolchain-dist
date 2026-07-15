@@ -6,8 +6,8 @@ This repository provides up to date builds of a minimal Windows C/C++ toolchain 
 
 | Platform    | Architecture    | Download                                                                                                       |
 | ----------- | --------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Windows** | x86-64          | [🔧 Toolchain](https://github.com/lde-org/toolchain-dist/releases/latest/download/toolchain-windows-x86-64.7z) \| [📦 7zr](https://github.com/lde-org/toolchain-dist/releases/latest/download/7zr-x86_64.exe) |
-| **Windows** | aarch64 (ARM64) | [🔧 Toolchain](https://github.com/lde-org/toolchain-dist/releases/latest/download/toolchain-windows-aarch64.7z) \| [📦 7zr](https://github.com/lde-org/toolchain-dist/releases/latest/download/7zr-aarch64.exe) |
+| **Windows** | x86-64          | [🔧 Toolchain](https://github.com/lde-org/toolchain-dist/releases/latest/download/toolchain-windows-x86-64.7z) \| [📦 7z](https://github.com/lde-org/toolchain-dist/releases/latest/download/7z-x86_64.exe) |
+| **Windows** | aarch64 (ARM64) | [🔧 Toolchain](https://github.com/lde-org/toolchain-dist/releases/latest/download/toolchain-windows-aarch64.7z) \| [📦 7z](https://github.com/lde-org/toolchain-dist/releases/latest/download/7z-aarch64.exe) |
 
 ## Download
 
