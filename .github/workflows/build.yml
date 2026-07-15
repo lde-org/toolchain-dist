@@ -112,8 +112,21 @@ jobs:
             $match || rm -f "$f"
           done
 
-          # ── prune: target sysroot share/ ──
+          # ── prune: DLLs from removed components (lldb, python, asan, omp) ──
+          rm -f "$root"/bin/{liblldb,lldb-*,libpython*,libffi-*}.dll
+          rm -f "$root"/bin/libclang_rt.asan*
+          rm -f "$root"/bin/libomp.dll
+
+          # ── prune: clang runtime: drop linux/ (cross-lib), sanitizers, fuzzers ──
+          clanglib="$root/lib/clang/22"
+          rm -rf "$clanglib"/lib/linux "$clanglib"/share "$clanglib"/bin
+          for lib in fuzzer ubsan stats profile xray hwasan lsan tsan msan scudo memprof gwp_asan nsan dfsan asan safe_stack; do
+            rm -f "$clanglib"/lib/windows/libclang_rt.{"$lib","$lib"_*}*
+          done
+
+          # ── prune: target sysroot share/ and unneeded DLLs ──
           rm -rf "$root/$target/share"
+          rm -f "$root/$target"/bin/{libomp,libclang_rt.asan*}.dll "$root/$target"/bin/libclang_rt.asan*
 
           echo "Pruned size: $(du -sh "$root" | cut -f1)"
 
