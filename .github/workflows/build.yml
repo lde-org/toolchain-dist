@@ -139,6 +139,11 @@ jobs:
           rm -rf "$root/$target/share"
           rm -f "$root/$target"/bin/{libomp,libclang_rt.asan*}.dll "$root/$target"/bin/libclang_rt.asan*
 
+          # ── busybox: expose every applet as its own .exe ──
+          # LuaRocks build scripts and io.popen (which shells out via cmd.exe)
+          # resolve POSIX tools (uname, sed, grep, ...) by name on PATH.
+          "$root/bin/busybox.exe" --install "$root/bin"
+
           echo "Pruned size: $(du -sh "$root" | cut -f1)"
 
       # ── repack ───────────────────────────────────────────────────
@@ -160,6 +165,7 @@ jobs:
           "$bin/gcc.exe" --version
           "$bin/mingw32-make.exe" --version
           "$bin/sh.exe" -c "echo sh ok"
+          "$bin/uname.exe" -s
           echo "Smoke test passed."
 
       # ── publish ─────────────────────────────────────────────────
